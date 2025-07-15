@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OKX 交易监控系统</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #1a2a4a, #0c1220);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+            overflow-x: hidden;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            padding: 20px 0;
+            margin-bottom: 30px;
+            border-bottom: 1px solid #2a3b5a;
+        }
+        
+        h1 {
+            font-size: 2.8rem;
+            background: linear-gradient(to right, #4facfe, #00f2fe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #8a9bb8;
+            font-size: 1.2rem;
+        }
+        
+        .dashboard {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+        
+        .card {
+            background: rgba(25, 35, 60, 0.7);
+            border-radius: 15px;
+            padding: 25px;
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(100, 150, 255, 0.2);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+        
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 35px rgba(0, 150, 255, 0.25);
+        }
+        
+        .card-header {
+            display: flex;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(100, 150, 255, 0.2);
+        }
+        
+        .card-icon {
+            font-size: 1.8rem;
+            margin-right: 15px;
+            background: linear-gradient(to right, #4facfe, #00f2fe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .card-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+        
+        .price-value {
+            font-size: 2.8rem;
+            font-weight: 700;
+            margin: 15px 0;
+            background: linear-gradient(to right, #4facfe, #00f2fe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .equity-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin: 15px 0;
+            background: linear-gradient(to right, #4facfe, #00f2fe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        
+        .change {
+            display: inline-block;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-left: 10px;
+        }
+        
+        .change.positive {
+            background: rgba(46, 204, 113, 0.2);
+            color: #2ecc71;
+        }
+        
+        .change.negative {
+            background: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+        }
+        
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .info-item {
+            background: rgba(20, 30, 50, 0.6);
+            padding: 12px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        
+        .info-label {
+            font-size: 0.9rem;
+            color: #8a9bb8;
+            margin-bottom: 5px;
+        }
+        
+        .info-value {
+            font-size: 1.2rem;
+            font-weight: 600;
+        }
+        
+        .status-card {
+            text-align: center;
+        }
+        
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            padding: 10px 20px;
+            border-radius: 30px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin: 15px 0;
+        }
+        
+        .status-indicator.normal {
+            background: rgba(46, 204, 113, 0.2);
+            color: #2ecc71;
+        }
+        
+        .status-indicator.warning {
+            background: rgba(241, 196, 15, 0.2);
+            color: #f1c40f;
+        }
+        
+        .status-indicator.error {
+            background: rgba(231, 76, 60, 0.2);
+            color: #e74c3c;
+        }
+        
+        .chart-container {
+            height: 300px;
+            margin-top: 15px;
+        }
+        
+        .chart-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 25px;
+            margin-bottom: 30px;
+        }
+        
+        .chart-card {
+            grid-column: span 1;
+        }
+        
+        .full-width {
+            grid-column: 1 / -1;
+        }
+        
+        .latency {
+            font-size: 0.9rem;
+            color: #8a9bb8;
+            text-align: right;
+            margin-top: 10px;
+        }
+        
+        .footer {
+            text-align: center;
+            padding: 20px;
+            color: #8a9bb8;
+            font-size: 0.9rem;
+            border-top: 1px solid #2a3b5a;
+            margin-top: 20px;
+        }
+        
+        .exchange-logo {
+            display: inline-block;
+            width: 120px;
+            height: 40px;
+            background: linear-gradient(to right, #4facfe, #00f2fe);
+            -webkit-mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40"><text x="60" y="25" font-family="Arial" font-size="20" text-anchor="middle" fill="white">OKX</text></svg>') no-repeat center;
+            mask: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 40"><text x="60" y="25" font-family="Arial" font-size="20" text-anchor="middle" fill="white">OKX</text></svg>') no-repeat center;
+        }
+        
+        .trading-controls {
+            display: flex;
+            gap: 15px;
+            margin: 20px 0;
+            justify-content: center;
+        }
+        
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-success {
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            color: white;
+        }
+        
+        .btn-success:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(46, 204, 113, 0.4);
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+            color: white;
+        }
+        
+        .btn-danger:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(231, 76, 60, 0.4);
+        }
+        
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: slideIn 0.3s ease;
+        }
+        
+        .notification.success {
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+        }
+        
+        .notification.error {
+            background: linear-gradient(135deg, #e74c3c, #c0392b);
+        }
+        
+        .notification.info {
+            background: linear-gradient(135deg, #3498db, #2980b9);
+        }
+        
+        @keyframes slideIn {
+            from {
+                transform: translateX(100%);
+                opacity: 0;
+            }
+            to {
+                transform: translateX(0);
+                opacity: 1;
+            }
+        }
+        
+        @media (max-width: 768px) {
+            .chart-row {
+                grid-template-columns: 1fr;
+            }
+            
+            .dashboard {
+                grid-template-columns: 1fr;
+            }
+            
+            .price-value, .equity-value {
+                font-size: 2.2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>高性能交易监控系统</h1>
+            <p class="subtitle">直接对接OKX交易所API | 实时行情与账户监控</p>
+        </header>
+        
+        <div class="dashboard">
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-chart-line card-icon"></i>
+                    <h2 class="card-title">BTC/USDT 实时行情</h2>
+                </div>
+                <div class="price-value">$--</div>
+                <div class="info-grid">
+                  <div class="info-item">
+                    <div class="info-label">请求间隔</div>
+                    <div class="info-value"><span id="requestInterval">--</span> ms</div>
+                  </div>
+                    <div class="info-item">
+                        <div class="info-label">24小时涨跌幅</div>
+                        <div class="info-value"><span id="change24h">--</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">24小时交易量</div>
+                        <div class="info-value"><span id="volume24h">--</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">买一价</div>
+                        <div class="info-value"><span id="bidPrice">--</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">卖一价</div>
+                        <div class="info-value"><span id="askPrice">--</span></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-robot card-icon"></i>
+                    <h2 class="card-title">交易引擎</h2>
+                </div>
+                <div class="trading-controls">
+                    <button id="startTrading" class="btn btn-success">
+                        <i class="fas fa-play"></i> 启动交易
+                    </button>
+                    <button id="stopTrading" class="btn btn-danger" disabled>
+                        <i class="fas fa-stop"></i> 停止交易
+                    </button>
+                </div>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">引擎状态</div>
+                        <div class="info-value"><span id="engineStatus">未启动</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">当前信号</div>
+                        <div class="info-value"><span id="currentSignal">--</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">信号置信度</div>
+                        <div class="info-value"><span id="signalConfidence">--</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">交易次数</div>
+                        <div class="info-value"><span id="tradeCount">0</span></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card">
+                <div class="card-header">
+                    <i class="fas fa-wallet card-icon"></i>
+                    <h2 class="card-title">账户权益</h2>
+                </div>
+                <div class="equity-value">$--</div>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">今日收益</div>
+                        <div class="info-value"><span id="todayProfit">--</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">持仓价值</div>
+                        <div class="info-value"><span id="positionValue">--</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">可用保证金</div>
+                        <div class="info-value"><span id="availableMargin">--</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">风险率</div>
+                        <div class="info-value"><span id="riskRatio">--</span></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="card status-card">
+                <div class="card-header">
+                    <i class="fas fa-network-wired card-icon"></i>
+                    <h2 class="card-title">系统状态</h2>
+                </div>
+                <div class="status-indicator normal" id="statusIndicator">
+                    <i class="fas fa-check-circle"></i>
+                    <span>连接正常</span>
+                </div>
+                <div class="info-grid">
+                    <div class="info-item">
+                        <div class="info-label">API延迟</div>
+                        <div class="info-value"><span id="apiLatency">--</span> ms</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">最后更新</div>
+                        <div class="info-value"><span id="lastUpdate">--</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">今日请求</div>
+                        <div class="info-value"><span id="requestsToday">0</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">错误计数</div>
+                        <div class="info-value"><span id="errorCount">0</span></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="chart-row">
+            <div class="card chart-card">
+                <div class="card-header">
+                    <i class="fas fa-chart-bar card-icon"></i>
+                    <h2 class="card-title">价格走势</h2>
+                </div>
+                <div class="chart-container">
+                    <canvas id="priceChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="card chart-card">
+                <div class="card-header">
+                    <i class="fas fa-chart-area card-icon"></i>
+                    <h2 class="card-title">账户权益变化</h2>
+                </div>
+                <div class="chart-container">
+                    <canvas id="equityChart"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <div class="card full-width">
+            <div class="card-header">
+                <i class="fas fa-exchange-alt card-icon"></i>
+                <h2 class="card-title">最近交易</h2>
+            </div>
+            <div class="chart-container">
+                <canvas id="tradesChart"></canvas>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <p>直接对接 OKX 交易所 API | 高性能交易监控系统</p>
+            <div class="exchange-logo"></div>
+            <p>系统延迟: <span id="systemLatency">--</span> ms | 更新时间: <span id="updateTimestamp">--</span></p>
+        </div>
+    </div>
+
+    <script>
+        // 初始化Socket连接
+        const socket = io();
+        
+        // 获取DOM元素
+        const priceEl = document.querySelector('.price-value');
+        const equityEl = document.querySelector('.equity-value');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const apiLatencyEl = document.getElementById('apiLatency');
+        const lastUpdateEl = document.getElementById('lastUpdate');
+        const systemLatencyEl = document.getElementById('systemLatency');
+        const updateTimestampEl = document.getElementById('updateTimestamp');
+        const requestsTodayEl = document.getElementById('requestsToday');
+        const errorCountEl = document.getElementById('errorCount');
+        
+        // 交易引擎控制元素
+        const startTradingBtn = document.getElementById('startTrading');
+        const stopTradingBtn = document.getElementById('stopTrading');
+        const engineStatusEl = document.getElementById('engineStatus');
+        const currentSignalEl = document.getElementById('currentSignal');
+        const signalConfidenceEl = document.getElementById('signalConfidence');
+        const tradeCountEl = document.getElementById('tradeCount');
+        
+        // 图表初始化
+        const priceCtx = document.getElementById('priceChart').getContext('2d');
+        const equityCtx = document.getElementById('equityChart').getContext('2d');
+        const tradesCtx = document.getElementById('tradesChart').getContext('2d');
+        
+        // 价格图表
+        const priceChart = new Chart(priceCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'BTC/USDT',
+                    data: [],
+                    borderColor: '#4facfe',
+                    backgroundColor: 'rgba(79, 172, 254, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        grid: {
+                            color: 'rgba(100, 150, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: '#8a9bb8'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            color: '#8a9bb8'
+                        }
+                    }
+                }
+            }
+        });
+        
+        // 权益图表
+        const equityChart = new Chart(equityCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: '账户权益',
+                    data: [],
+                    borderColor: '#00f2fe',
+                    backgroundColor: 'rgba(0, 242, 254, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.3
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        grid: {
+                            color: 'rgba(100, 150, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: '#8a9bb8'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            color: '#8a9bb8'
+                        }
+                    }
+                }
+            }
+        });
+        
+        // 交易图表
+        const tradesChart = new Chart(tradesCtx, {
+            type: 'bar',
+            data: {
+                labels: ['买入', '卖出'],
+                datasets: [{
+                    label: '交易量',
+                    data: [0, 0],
+                    backgroundColor: [
+                        'rgba(46, 204, 113, 0.7)',
+                        'rgba(231, 76, 60, 0.7)'
+                    ],
+                    borderColor: [
+                        'rgba(46, 204, 113, 1)',
+                        'rgba(231, 76, 60, 1)'
+                    ],
+                    borderWidth: 1
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        display: false
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(100, 150, 255, 0.1)'
+                        },
+                        ticks: {
+                            color: '#8a9bb8'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            display: false
+                        },
+                        ticks: {
+                            color: '#8a9bb8'
+                        }
+                    }
+                }
+            }
+        });
+        
+        // 模拟数据点计数
+        let dataPointCount = 0;
+        let requestsCount = 0;
+        let errorsCount = 0;
+        
+        // 监听价格更新
+        socket.on('price_update', (data) => {
+            // 更新价格显示
+            priceEl.textContent = `$${data.price.toFixed(2)}`;
+            
+            // 更新其他价格信息
+            document.getElementById('requestInterval').textContent = data.requestInterval;
+            document.getElementById('change24h').textContent = `${(Math.random() * 2 - 1).toFixed(2)}%`;
+            document.getElementById('volume24h').textContent = `${(Math.random() * 1000 + 5000).toFixed(0)} BTC`;
+            document.getElementById('bidPrice').textContent = `$${(data.price - Math.random() * 10).toFixed(2)}`;
+            document.getElementById('askPrice').textContent = `$${(data.price + Math.random() * 10).toFixed(2)}`;
+            
+            // 更新账户权益
+            equityEl.textContent = `$${data.equity.toFixed(2)}`;
+            
+            // 更新账户信息
+            document.getElementById('todayProfit').textContent = `$${(Math.random() * 500 - 250).toFixed(2)}`;
+            document.getElementById('positionValue').textContent = `$${data.positionValue}`;
+            document.getElementById('availableMargin').textContent = `$${data.availableMargin}`;
+            document.getElementById('riskRatio').textContent = `${(Math.random() * 30 + 70).toFixed(2)}%`;
+            
+            // 更新状态信息
+            apiLatencyEl.textContent = data.latency;
+            systemLatencyEl.textContent = (Date.now() - data.timestamp).toString();
+            updateTimestampEl.textContent = new Date(data.timestamp).toLocaleTimeString();
+            lastUpdateEl.textContent = new Date().toLocaleTimeString();
+            
+            // 更新请求计数
+            requestsCount++;
+            requestsTodayEl.textContent = requestsCount;
+            
+            // 更新交易引擎状态
+            if (data.tradingEngineStatus) {
+                engineStatusEl.textContent = data.tradingEngineStatus.isRunning ? '运行中' : '已停止';
+                tradeCountEl.textContent = data.tradingEngineStatus.tradesCount || 0;
+            }
+            
+            // 更新交易信号
+            if (data.currentSignal) {
+                currentSignalEl.textContent = data.currentSignal.signal;
+                signalConfidenceEl.textContent = `${data.currentSignal.confidence.toFixed(1)}%`;
+                
+                // 根据信号类型设置颜色
+                if (data.currentSignal.signal === 'BUY') {
+                    currentSignalEl.style.color = '#2ecc71';
+                } else if (data.currentSignal.signal === 'SELL') {
+                    currentSignalEl.style.color = '#e74c3c';
+                } else {
+                    currentSignalEl.style.color = '#8a9bb8';
+                }
+            }
+            
+            // 更新图表数据
+            dataPointCount++;
+            
+            // 价格图表
+            if (priceChart.data.labels.length > 20) {
+                priceChart.data.labels.shift();
+                priceChart.data.datasets[0].data.shift();
+            }
+            
+            priceChart.data.labels.push('');
+            priceChart.data.datasets[0].data.push(data.price);
+            priceChart.update();
+            
+            // 权益图表
+            if (equityChart.data.labels.length > 20) {
+                equityChart.data.labels.shift();
+                equityChart.data.datasets[0].data.shift();
+            }
+            
+            equityChart.data.labels.push('');
+            equityChart.data.datasets[0].data.push(data.equity);
+            equityChart.update();
+            
+            // 交易图表
+            tradesChart.data.datasets[0].data = [
+                Math.random() * 100,
+                Math.random() * 100
+            ];
+            tradesChart.update();
+        });
+        
+        // 监听网络状态
+        socket.on('network_status', (data) => {
+            statusIndicator.className = 'status-indicator';
+            
+            if (data.status === 'normal') {
+                statusIndicator.classList.add('normal');
+                statusIndicator.innerHTML = '<i class="fas fa-check-circle"></i> 连接正常';
+            } else if (data.status === 'warning') {
+                statusIndicator.classList.add('warning');
+                statusIndicator.innerHTML = '<i class="fas fa-exclamation-triangle"></i> ' + data.message;
+            } else {
+                statusIndicator.classList.add('error');
+                statusIndicator.innerHTML = '<i class="fas fa-exclamation-circle"></i> ' + data.message;
+                errorsCount++;
+                errorCountEl.textContent = errorsCount;
+            }
+        });
+        
+        // 模拟初始数据
+        function initializeData() {
+            const now = Date.now();
+            const initialPrice = 60000 + Math.random() * 5000;
+            const initialEquity = 10000;
+            
+            // 生成初始图表数据
+            for (let i = 0; i < 20; i++) {
+                const timeOffset = (20 - i) * 5000; // 每5秒一个点
+                const price = initialPrice + (Math.random() - 0.5) * 1000;
+                const equity = initialEquity + (Math.random() - 0.5) * 1000;
+                
+                priceChart.data.labels.push('');
+                priceChart.data.datasets[0].data.push(price);
+                
+                equityChart.data.labels.push('');
+                equityChart.data.datasets[0].data.push(equity);
+            }
+            
+            priceChart.update();
+            equityChart.update();
+        }
+        
+        // 交易引擎控制
+        startTradingBtn.addEventListener('click', async () => {
+            try {
+                startTradingBtn.disabled = true;
+                startTradingBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 启动中...';
+                
+                const response = await fetch('/api/trading/start', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    startTradingBtn.style.display = 'none';
+                    stopTradingBtn.disabled = false;
+                    engineStatusEl.textContent = '运行中';
+                    engineStatusEl.style.color = '#2ecc71';
+                    
+                    // 显示成功消息
+                    showNotification('交易引擎启动成功！', 'success');
+                } else {
+                    throw new Error(result.message);
+                }
+            } catch (error) {
+                console.error('启动交易引擎失败:', error);
+                showNotification(`启动失败: ${error.message}`, 'error');
+                startTradingBtn.disabled = false;
+                startTradingBtn.innerHTML = '<i class="fas fa-play"></i> 启动交易';
+            }
+        });
+        
+        stopTradingBtn.addEventListener('click', async () => {
+            try {
+                stopTradingBtn.disabled = true;
+                stopTradingBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 停止中...';
+                
+                const response = await fetch('/api/trading/stop', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    stopTradingBtn.style.display = 'none';
+                    startTradingBtn.disabled = false;
+                    startTradingBtn.style.display = 'flex';
+                    engineStatusEl.textContent = '已停止';
+                    engineStatusEl.style.color = '#e74c3c';
+                    
+                    // 显示成功消息
+                    showNotification('交易引擎已停止！', 'success');
+                } else {
+                    throw new Error(result.message);
+                }
+            } catch (error) {
+                console.error('停止交易引擎失败:', error);
+                showNotification(`停止失败: ${error.message}`, 'error');
+                stopTradingBtn.disabled = false;
+                stopTradingBtn.innerHTML = '<i class="fas fa-stop"></i> 停止交易';
+            }
+        });
+        
+        // 显示通知函数
+        function showNotification(message, type = 'info') {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.innerHTML = `
+                <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+                <span>${message}</span>
+            `;
+            
+            document.body.appendChild(notification);
+            
+            // 3秒后自动移除
+            setTimeout(() => {
+                notification.remove();
+            }, 3000);
+        }
+        
+        // 初始化
+        initializeData();
+        
+        // 模拟实时更新
+        setInterval(() => {
+            const price = parseFloat(priceEl.textContent.replace('$', '')) || 60000;
+            const newPrice = price + (Math.random() - 0.5) * 100;
+            
+            const equity = parseFloat(equityEl.textContent.replace('$', '')) || 10000;
+            const newEquity = equity + (Math.random() - 0.5) * 50;
+            
+            const latency = Math.floor(Math.random() * 50) + 20;
+            
+            // 模拟数据更新
+            socket.emit('price_update', {
+                price: newPrice,
+                equity: newEquity,
+                latency: latency,
+                timestamp: Date.now()
+            });
+        }, 1000);
+    </script>
+</body>
+</html>
