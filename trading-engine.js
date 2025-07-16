@@ -10,6 +10,8 @@ class TradingEngine {
             strategy: 'sma_crossover',
             riskPercent: 2, // 每次交易风险2%
             maxPositions: 1,
+            isSimulated: true, // 默认使用模拟盘
+            simulatedBalance: 10000, // 模拟账户余额
             ...config
         };
         
@@ -18,6 +20,14 @@ class TradingEngine {
         this.SECRET_KEY = process.env.OKX_SECRET_KEY || '';
         this.PASSPHRASE = process.env.OKX_PASSPHRASE || '';
         this.USE_AUTH = !!this.API_KEY;
+        
+        // 模拟盘配置
+        this.simulatedAccount = {
+            balance: this.config.simulatedBalance,
+            positions: [],
+            orders: [],
+            trades: []
+        };
         
         // 创建优化的HTTP Agent
         this.httpsAgent = new https.Agent({
@@ -46,6 +56,19 @@ class TradingEngine {
             losingTrades: 0,
             totalProfit: 0,
             maxDrawdown: 0
+        };
+        
+        // 止损止盈配置
+        this.stopLossConfig = {
+            enabled: true,
+            percent: 2, // 2%止损
+            trailing: false // 是否启用追踪止损
+        };
+        
+        this.takeProfitConfig = {
+            enabled: true,
+            percent: 4, // 4%止盈
+            trailing: false // 是否启用追踪止盈
         };
     }
     
@@ -184,6 +207,18 @@ class TradingEngine {
     // 获取账户信息
     async getAccountInfo() {
         try {
+            // 如果是模拟盘，返回模拟账户信息
+            if (this.config.isSimulated) {
+                const accountInfo = {
+                    total: { USDT: this.simulatedAccount.balance },
+                    free: { USDT: this.simulatedAccount.balance },
+                    used: { USDT: 0 }
+                };
+                
+                this.cache.set('accountInfo', accountInfo);
+                return accountInfo;
+            }
+            
             const path = '/api/v5/account/balance';
             const result = await this.makeRequest(path);
             
@@ -204,12 +239,76 @@ class TradingEngine {
                 });
             }
             
-            // 缓存账户信息
             this.cache.set('accountInfo', accountInfo);
             return accountInfo;
             
         } catch (error) {
             console.error('❌ 获取账户信息失败:', error.message);
+            throw error;
+        }
+    }
+    
+    // 下单
+    async placeOrder(side, size, orderType = 'market', stopLossPrice = null, takeProfitPrice = null) {
+        try {
+            // 如果是模拟盘，直接返回模拟订单
+            if (this.config.isSimulated) {
+                const currentPrice = this.priceHistory[this.priceHistory.length - 1].close;
+                const simulatedOrder = {
+                    ordId: `sim_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+                    side: side,
+                    sz: size.toString(),
+                    instId: this.config.symbol,
+                    ordType: orderType,
+                    state: 'filled',
+                    fillPx: currentPrice.toString(),
+                    fillSz: size.toString(),
+                    timestamp: Date.now()
+                };
+                
+                // 如果是买入订单，设置止损止盈价格
+                if (side === 'buy' && (stopLossPrice || takeProfitPrice)) {
+                    simulatedOrder.stopLossPrice = stopLossPrice;
+                    simulatedOrder.takeProfitPrice = takeProfitPrice;
+                }
+                
+                this.simulatedAccount.orders.push(simulatedOrder);
+                return simulatedOrder;
+            }
+            
+            // 实盘下单
+            const orderData = {
+                instId: this.config.symbol,
+                tdMode: 'cash',
+                side: side,
+                ordType: orderType,
+                sz: size.toString()
+            };
+            
+            // 添加止损止盈参数（仅对买入订单）
+            if (side === 'buy' && (stopLossPrice || takeProfitPrice)) {
+                if (stopLossPrice) {
+                    orderData.slPx = stopLossPrice.toString(); // 止损价格
+                    orderData.slOrdPx = stopLossPrice.toString(); // 止损委托价格
+                }
+                if (takeProfitPrice) {
+                    orderData.tpPx = takeProfitPrice.toString(); // 止盈价格
+                    orderData.tpOrdPx = takeProfitPrice.toString(); // 止盈委托价格
+                }
+            }
+            
+            const body = JSON.stringify(orderData);
+            const path = '/api/v5/trade/order';
+            const result = await this.makeRequest(path, 'POST', body);
+            
+            if (result.data && result.data.length > 0) {
+                return result.data[0];
+            }
+            
+            return null;
+            
+        } catch (error) {
+            console.error('❌ 下单失败:', error.message);
             return null;
         }
     }
@@ -217,6 +316,21 @@ class TradingEngine {
     // 获取持仓信息
     async getPositions() {
         try {
+            // 如果是模拟盘，返回模拟持仓
+            if (this.config.isSimulated) {
+                if (this.simulatedAccount.positions.length === 0) {
+                    return null;
+                }
+                
+                const position = this.simulatedAccount.positions[0];
+                return {
+                    symbol: position.symbol,
+                    size: position.size,
+                    avgPrice: position.avgPrice,
+                    timestamp: position.timestamp
+                };
+            }
+            
             const path = `/api/v5/account/positions?instId=${this.config.symbol}`;
             const result = await this.makeRequest(path);
             
@@ -224,12 +338,9 @@ class TradingEngine {
                 const position = result.data[0];
                 return {
                     symbol: position.instId,
-                    side: position.posSide,
                     size: parseFloat(position.pos),
                     avgPrice: parseFloat(position.avgPx),
-                    unrealizedPnl: parseFloat(position.upl),
-                    margin: parseFloat(position.margin),
-                    leverage: parseFloat(position.lever)
+                    timestamp: Date.now()
                 };
             }
             
@@ -286,25 +397,34 @@ class TradingEngine {
     // 更新价格数据
     async updatePriceData(ticker) {
         try {
-            const newCandle = {
-                timestamp: Date.now(),
+            const priceData = {
+                timestamp: ticker.timestamp,
                 open: ticker.last,
-                high: ticker.last,
-                low: ticker.last,
+                high: ticker.high,
+                low: ticker.low,
                 close: ticker.last,
-                volume: ticker.volume || 0
+                volume: ticker.volume
             };
             
-            // 添加到历史数据
-            this.priceHistory.push(newCandle);
+            this.priceHistory.push(priceData);
             
             // 保持历史数据长度
             if (this.priceHistory.length > this.maxHistoryLength) {
                 this.priceHistory.shift();
             }
             
-            // 重新计算指标
+            // 更新指标
             this.calculateIndicators();
+            
+            // 检查止损止盈
+            const stopSignal = this.checkStopLossAndTakeProfit(ticker.last);
+            if (stopSignal) {
+                await this.executeTrade({
+                    signal: 'SELL',
+                    reason: stopSignal.reason,
+                    confidence: 100
+                });
+            }
             
         } catch (error) {
             console.error('❌ 更新价格数据失败:', error.message);
@@ -391,21 +511,52 @@ class TradingEngine {
             
             if (signal.signal === 'BUY' && (!currentPosition || currentPosition.size === 0)) {
                 // 开多仓
-                const quantity = this.calculateOrderSize(currentPrice, 100); // 示例风险金额
+                const quantity = this.calculateOrderSize(currentPrice, 100);
                 
                 if (quantity > 0) {
-                    const order = await this.placeOrder('buy', quantity, 'market');
+                    // 计算止损止盈价格
+                    let stopLossPrice = null;
+                    let takeProfitPrice = null;
+                    
+                    if (this.stopLossConfig.enabled) {
+                        stopLossPrice = currentPrice * (1 - this.stopLossConfig.percent / 100);
+                        console.log(`🛑 设置止损价格: $${stopLossPrice.toFixed(2)} (${this.stopLossConfig.percent}%)`);
+                    }
+                    
+                    if (this.takeProfitConfig.enabled) {
+                        takeProfitPrice = currentPrice * (1 + this.takeProfitConfig.percent / 100);
+                        console.log(`🎯 设置止盈价格: $${takeProfitPrice.toFixed(2)} (${this.takeProfitConfig.percent}%)`);
+                    }
+                    
+                    const order = await this.placeOrder('buy', quantity, 'market', stopLossPrice, takeProfitPrice);
                     
                     if (order) {
                         console.log(`✅ 买入订单执行成功: ${order.ordId}`);
+                        
+                        // 更新模拟账户
+                        if (this.config.isSimulated) {
+                            const cost = quantity * currentPrice;
+                            this.simulatedAccount.balance -= cost;
+                            this.simulatedAccount.positions.push({
+                                symbol: this.config.symbol,
+                                size: quantity,
+                                avgPrice: currentPrice,
+                                timestamp: Date.now(),
+                                stopLossPrice: stopLossPrice,
+                                takeProfitPrice: takeProfitPrice
+                            });
+                        }
+                        
                         this.trades.push({
-                            id: order.ordId,
+                            id: order.ordId || `sim_${Date.now()}`,
                             type: 'BUY',
                             price: currentPrice,
                             quantity: quantity,
                             timestamp: Date.now(),
                             reason: signal.reason,
-                            confidence: signal.confidence
+                            confidence: signal.confidence,
+                            stopLossPrice: stopLossPrice,
+                            takeProfitPrice: takeProfitPrice
                         });
                         
                         this.stats.totalTrades++;
@@ -418,8 +569,26 @@ class TradingEngine {
                 
                 if (order) {
                     console.log(`✅ 卖出订单执行成功: ${order.ordId}`);
+                    
+                    // 更新模拟账户
+                    if (this.config.isSimulated) {
+                        const revenue = currentPosition.size * currentPrice;
+                        this.simulatedAccount.balance += revenue;
+                        this.simulatedAccount.positions = [];
+                        
+                        // 计算盈亏
+                        const entryPrice = currentPosition.avgPrice;
+                        const pnl = (currentPrice - entryPrice) * currentPosition.size;
+                        if (pnl > 0) {
+                            this.stats.winningTrades++;
+                        } else {
+                            this.stats.losingTrades++;
+                        }
+                        this.stats.totalProfit += pnl;
+                    }
+                    
                     this.trades.push({
-                        id: order.ordId,
+                        id: order.ordId || `sim_${Date.now()}`,
                         type: 'SELL',
                         price: currentPrice,
                         quantity: currentPosition.size,
@@ -441,52 +610,69 @@ class TradingEngine {
         }
     }
     
-    // 下单
-    async placeOrder(side, size, orderType = 'market') {
-        try {
-            const body = JSON.stringify({
-                instId: this.config.symbol,
-                tdMode: 'cash',
-                side: side,
-                ordType: orderType,
-                sz: size.toString()
-            });
-            
-            const path = '/api/v5/trade/order';
-            const result = await this.makeRequest(path, 'POST', body);
-            
-            if (result.data && result.data.length > 0) {
-                return result.data[0];
-            }
-            
-            return null;
-            
-        } catch (error) {
-            console.error('❌ 下单失败:', error.message);
-            return null;
-        }
-    }
-    
     // 初始化
     async initialize() {
         try {
             console.log('🔄 初始化交易引擎...');
             
-            // 加载历史数据
-            await this.getKlineData();
+            // 如果是模拟模式，使用模拟数据
+            if (this.config.isSimulated) {
+                console.log('📊 使用模拟数据初始化...');
+                this.initializeSimulatedData();
+            } else {
+                // 加载历史数据
+                await this.getKlineData();
+            }
             
             // 计算初始指标
             this.calculateIndicators();
             
             // 获取账户信息
-            await this.getAccountInfo();
+            if (!this.config.isSimulated) {
+                await this.getAccountInfo();
+            }
             
             console.log('✅ 交易引擎初始化完成');
             return true;
         } catch (error) {
             console.error('❌ 交易引擎初始化失败:', error.message);
+            
+            // 如果是API错误，尝试使用模拟数据
+            if (error.code === 1016 || error.message.includes('频率限制')) {
+                console.log('⚠️ 检测到API频率限制，切换到模拟数据模式...');
+                this.config.isSimulated = true;
+                this.initializeSimulatedData();
+                this.calculateIndicators();
+                console.log('✅ 使用模拟数据初始化完成');
+                return true;
+            }
+            
             return false;
         }
+    }
+    
+    // 初始化模拟数据
+    initializeSimulatedData() {
+        const basePrice = 60000;
+        const now = Date.now();
+        
+        // 生成模拟K线数据
+        this.priceHistory = [];
+        for (let i = 100; i >= 0; i--) {
+            const timestamp = now - i * 60000; // 每分钟一个数据点
+            const price = basePrice + (Math.random() - 0.5) * 2000; // 价格波动
+            
+            this.priceHistory.push({
+                timestamp: timestamp,
+                open: price,
+                high: price + Math.random() * 100,
+                low: price - Math.random() * 100,
+                close: price + (Math.random() - 0.5) * 50,
+                volume: Math.random() * 1000 + 500
+            });
+        }
+        
+        console.log(`📈 生成模拟K线数据: ${this.priceHistory.length} 条记录`);
     }
     
     // 启动交易引擎
@@ -542,6 +728,65 @@ class TradingEngine {
     // 获取价格历史
     getPriceHistory() {
         return this.priceHistory;
+    }
+
+    // 检查止损止盈
+    checkStopLossAndTakeProfit(currentPrice) {
+        try {
+            if (!this.currentPosition || this.currentPosition.size === 0) {
+                return null;
+            }
+            
+            const entryPrice = this.currentPosition.avgPrice;
+            const positionSize = this.currentPosition.size;
+            const unrealizedPnL = (currentPrice - entryPrice) * positionSize;
+            const unrealizedPercent = ((currentPrice - entryPrice) / entryPrice) * 100;
+            
+            // 检查止损
+            if (this.stopLossConfig.enabled && unrealizedPercent <= -this.stopLossConfig.percent) {
+                console.log(`🛑 触发止损: 价格 $${currentPrice.toFixed(2)}, 入场价 $${entryPrice.toFixed(2)}, 亏损 ${unrealizedPercent.toFixed(2)}%`);
+                console.log(`📊 持仓信息: 数量 ${positionSize}, 未实现盈亏 $${unrealizedPnL.toFixed(2)}`);
+                
+                return {
+                    action: 'STOP_LOSS',
+                    reason: `止损触发 (${this.stopLossConfig.percent}%)`,
+                    price: currentPrice,
+                    pnl: unrealizedPnL,
+                    percent: unrealizedPercent,
+                    entryPrice: entryPrice,
+                    positionSize: positionSize
+                };
+            }
+            
+            // 检查止盈
+            if (this.takeProfitConfig.enabled && unrealizedPercent >= this.takeProfitConfig.percent) {
+                console.log(`🎯 触发止盈: 价格 $${currentPrice.toFixed(2)}, 入场价 $${entryPrice.toFixed(2)}, 盈利 ${unrealizedPercent.toFixed(2)}%`);
+                console.log(`📊 持仓信息: 数量 ${positionSize}, 未实现盈亏 $${unrealizedPnL.toFixed(2)}`);
+                
+                return {
+                    action: 'TAKE_PROFIT',
+                    reason: `止盈触发 (${this.takeProfitConfig.percent}%)`,
+                    price: currentPrice,
+                    pnl: unrealizedPnL,
+                    percent: unrealizedPercent,
+                    entryPrice: entryPrice,
+                    positionSize: positionSize
+                };
+            }
+            
+            // 记录当前盈亏状态（每10%记录一次）
+            const absPercent = Math.abs(unrealizedPercent);
+            if (absPercent >= 1 && absPercent % 1 < 0.1) {
+                const status = unrealizedPercent > 0 ? '盈利' : '亏损';
+                console.log(`📈 当前${status}: ${unrealizedPercent.toFixed(2)}% ($${unrealizedPnL.toFixed(2)})`);
+            }
+            
+            return null;
+            
+        } catch (error) {
+            console.error('❌ 检查止损止盈失败:', error.message);
+            return null;
+        }
     }
 }
 

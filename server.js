@@ -7,6 +7,11 @@ const TradingEngine = require('./trading-engine');
 
 const app = express();
 const server = app.listen(3000);
+
+// 添加中间件
+app.use(express.json());
+app.use(express.static('public'));
+
 const io = socketio(server, {
   cors: {
     origin: "*",
@@ -18,7 +23,9 @@ const io = socketio(server, {
 const tradingEngine = new TradingEngine({
   symbol: 'BTC-USDT',
   strategy: 'sma_crossover',
-  riskPercent: 2
+  riskPercent: 2,
+  isSimulated: true, // 强制使用模拟模式
+  simulatedBalance: 10000
 });
 
 // 配置缓存
@@ -364,9 +371,6 @@ setInterval(() => {
   }
 }, 5000);
 
-// 提供前端文件
-app.use(express.static("public"));
-
 // 根路由重定向到前端
 app.get("/", (req, res) => {
   res.redirect("/index.html");
@@ -435,6 +439,127 @@ app.get("/api/trading/signal", (req, res) => {
   
   const signal = tradingEngine.calculateSignal();
   res.json(signal);
+});
+
+// 测试止损止盈功能端点
+app.post("/api/trading/test-stops", (req, res) => {
+  try {
+    const { testPrice } = req.body;
+    
+    if (typeof testPrice !== 'number' || testPrice <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: '测试价格必须是大于0的数字'
+      });
+    }
+    
+    // 模拟持仓
+    tradingEngine.currentPosition = {
+      size: 0.1,
+      avgPrice: 60000,
+      timestamp: Date.now()
+    };
+    
+    // 测试止损止盈
+    const result = tradingEngine.checkStopLossAndTakeProfit(testPrice);
+    
+    res.json({
+      success: true,
+      testPrice: testPrice,
+      entryPrice: tradingEngine.currentPosition.avgPrice,
+      result: result,
+      config: {
+        stopLoss: tradingEngine.stopLossConfig,
+        takeProfit: tradingEngine.takeProfitConfig
+      }
+    });
+    
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: `测试失败: ${error.message}`
+    });
+  }
+});
+
+// 获取止损止盈配置端点
+app.get("/api/trading/stops-config", (req, res) => {
+  try {
+    res.json({
+      success: true,
+      config: {
+        stopLoss: {
+          enabled: tradingEngine.stopLossConfig.enabled,
+          percent: tradingEngine.stopLossConfig.percent,
+          trailing: tradingEngine.stopLossConfig.trailing
+        },
+        takeProfit: {
+          enabled: tradingEngine.takeProfitConfig.enabled,
+          percent: tradingEngine.takeProfitConfig.percent,
+          trailing: tradingEngine.takeProfitConfig.trailing
+        }
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: `获取配置失败: ${error.message}`
+    });
+  }
+});
+
+// 止损止盈配置端点
+app.post("/api/trading/update-stops", (req, res) => {
+  try {
+    const { stopLossPercent, takeProfitPercent } = req.body;
+    
+    if (typeof stopLossPercent !== 'number' || typeof takeProfitPercent !== 'number') {
+      return res.status(400).json({
+        success: false,
+        message: '止损和止盈百分比必须是数字'
+      });
+    }
+    
+    if (stopLossPercent <= 0 || takeProfitPercent <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: '止损和止盈百分比必须大于0'
+      });
+    }
+    
+    // 更新交易引擎的止损止盈配置
+    tradingEngine.stopLossConfig.percent = stopLossPercent;
+    tradingEngine.takeProfitConfig.percent = takeProfitPercent;
+    
+    console.log(`✅ 止损止盈设置已更新: 止损${stopLossPercent}%, 止盈${takeProfitPercent}%`);
+    
+    res.json({
+      success: true,
+      message: '止损止盈设置更新成功',
+      config: {
+        stopLoss: stopLossPercent,
+        takeProfit: takeProfitPercent
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: `更新失败: ${error.message}`
+    });
+  }
+});
+
+// 获取当前配置
+app.get("/api/trading/config", (req, res) => {
+  res.json({
+    success: true,
+    config: {
+      stopLoss: tradingEngine.stopLossConfig,
+      takeProfit: tradingEngine.takeProfitConfig,
+      isSimulated: tradingEngine.config.isSimulated,
+      simulatedBalance: tradingEngine.simulatedAccount.balance
+    }
+  });
 });
 
 console.log("交易监控系统运行在: http://localhost:3000");

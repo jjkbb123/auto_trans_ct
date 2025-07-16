@@ -382,16 +382,59 @@
                         <div class="info-value"><span id="engineStatus">未启动</span></div>
                     </div>
                     <div class="info-item">
+                        <div class="info-label">交易模式</div>
+                        <div class="info-value"><span id="tradingMode">模拟盘</span></div>
+                    </div>
+                    <div class="info-item">
                         <div class="info-label">当前信号</div>
-                        <div class="info-value"><span id="currentSignal">--</span></div>
+                        <div class="info-value"><span id="currentSignal">等待信号</span></div>
                     </div>
                     <div class="info-item">
                         <div class="info-label">信号置信度</div>
-                        <div class="info-value"><span id="signalConfidence">--</span></div>
+                        <div class="info-value"><span id="signalConfidence">0%</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">止损价格</div>
+                        <div class="info-value"><span id="stopLossPrice">--</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">止盈价格</div>
+                        <div class="info-value"><span id="takeProfitPrice">--</span></div>
                     </div>
                     <div class="info-item">
                         <div class="info-label">交易次数</div>
                         <div class="info-value"><span id="tradeCount">0</span></div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">模拟余额</div>
+                        <div class="info-value"><span id="simulatedBalance">$10,000</span></div>
+                    </div>
+                </div>
+                
+                <!-- 止损止盈配置 -->
+                <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(100, 150, 255, 0.2);">
+                    <h3 style="margin-bottom: 15px; color: #4facfe;">止损止盈设置</h3>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="info-label">止损比例</div>
+                            <div class="info-value">
+                                <input type="number" id="stopLossPercent" value="2" min="0.1" max="10" step="0.1" style="width: 60px; background: rgba(20, 30, 50, 0.6); border: 1px solid #4facfe; color: #e0e0e0; padding: 5px; border-radius: 5px;"> %
+                            </div>
+                        </div>
+                        <div class="info-item">
+                            <div class="info-label">止盈比例</div>
+                            <div class="info-value">
+                                <input type="number" id="takeProfitPercent" value="4" min="0.1" max="20" step="0.1" style="width: 60px; background: rgba(20, 30, 50, 0.6); border: 1px solid #4facfe; color: #e0e0e0; padding: 5px; border-radius: 5px;"> %
+                            </div>
+                        </div>
+                    </div>
+                    <div style="margin-top: 15px; text-align: center;">
+                        <button id="updateStopLoss" class="btn btn-success" style="padding: 8px 16px; font-size: 0.9rem; margin-right: 10px;">
+                            <i class="fas fa-save"></i> 更新设置
+                        </button>
+                        <button id="testStopLoss" class="btn btn-info" style="padding: 8px 16px; font-size: 0.9rem;">
+                            <i class="fas fa-vial"></i> 测试功能
+                        </button>
                     </div>
                 </div>
             </div>
@@ -711,6 +754,21 @@
                 } else {
                     currentSignalEl.style.color = '#8a9bb8';
                 }
+                
+                // 计算并显示止损止盈价格
+                if (data.currentSignal.signal === 'BUY' && data.price) {
+                    const stopLossPercent = parseFloat(stopLossPercentInput.value) || 2;
+                    const takeProfitPercent = parseFloat(takeProfitPercentInput.value) || 4;
+                    
+                    const stopLossPrice = data.price * (1 - stopLossPercent / 100);
+                    const takeProfitPrice = data.price * (1 + takeProfitPercent / 100);
+                    
+                    document.getElementById('stopLossPrice').textContent = `$${stopLossPrice.toFixed(2)}`;
+                    document.getElementById('takeProfitPrice').textContent = `$${takeProfitPrice.toFixed(2)}`;
+                } else {
+                    document.getElementById('stopLossPrice').textContent = '--';
+                    document.getElementById('takeProfitPrice').textContent = '--';
+                }
             }
             
             // 更新图表数据
@@ -853,6 +911,161 @@
             }
         });
         
+        // 止损止盈配置
+        const updateStopLossBtn = document.getElementById('updateStopLoss');
+        const testStopLossBtn = document.getElementById('testStopLoss');
+        const stopLossPercentInput = document.getElementById('stopLossPercent');
+        const takeProfitPercentInput = document.getElementById('takeProfitPercent');
+        const simulatedBalanceEl = document.getElementById('simulatedBalance');
+        const tradingModeEl = document.getElementById('tradingMode');
+        
+        // 加载当前配置
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/trading/config');
+                const result = await response.json();
+                
+                if (result.success) {
+                    const config = result.config;
+                    
+                    // 更新止损止盈输入框
+                    stopLossPercentInput.value = config.stopLoss.percent;
+                    takeProfitPercentInput.value = config.takeProfit.percent;
+                    
+                    // 更新模拟账户余额
+                    if (config.isSimulated) {
+                        simulatedBalanceEl.textContent = `$${config.simulatedBalance.toLocaleString()}`;
+                        tradingModeEl.textContent = '模拟盘';
+                        tradingModeEl.style.color = '#f1c40f';
+                    } else {
+                        tradingModeEl.textContent = '实盘';
+                        tradingModeEl.style.color = '#e74c3c';
+                    }
+                }
+            } catch (error) {
+                console.error('加载配置失败:', error);
+            }
+        }
+        
+        updateStopLossBtn.addEventListener('click', async () => {
+            try {
+                const stopLossPercent = parseFloat(stopLossPercentInput.value);
+                const takeProfitPercent = parseFloat(takeProfitPercentInput.value);
+                
+                if (isNaN(stopLossPercent) || isNaN(takeProfitPercent)) {
+                    showNotification('请输入有效的百分比数值', 'error');
+                    return;
+                }
+                
+                if (stopLossPercent <= 0 || takeProfitPercent <= 0) {
+                    showNotification('百分比必须大于0', 'error');
+                    return;
+                }
+                
+                updateStopLossBtn.disabled = true;
+                updateStopLossBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 更新中...';
+                
+                const response = await fetch('/api/trading/update-stops', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        stopLossPercent: stopLossPercent,
+                        takeProfitPercent: takeProfitPercent
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showNotification('止损止盈设置更新成功！', 'success');
+                } else {
+                    throw new Error(result.message);
+                }
+            } catch (error) {
+                console.error('更新止损止盈设置失败:', error);
+                showNotification(`更新失败: ${error.message}`, 'error');
+            } finally {
+                updateStopLossBtn.disabled = false;
+                updateStopLossBtn.innerHTML = '<i class="fas fa-save"></i> 更新设置';
+            }
+        });
+        
+        // 测试止损止盈功能
+        testStopLossBtn.addEventListener('click', async () => {
+            try {
+                const testPrice = prompt('请输入测试价格 (例如: 59000 或 62400):');
+                if (!testPrice) return;
+                
+                const price = parseFloat(testPrice);
+                if (isNaN(price) || price <= 0) {
+                    showNotification('请输入有效的价格', 'error');
+                    return;
+                }
+                
+                testStopLossBtn.disabled = true;
+                testStopLossBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 测试中...';
+                
+                const response = await fetch('/api/trading/test-stops', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        testPrice: price
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    let message = `测试价格: $${result.testPrice.toFixed(2)}\n`;
+                    message += `入场价格: $${result.entryPrice.toFixed(2)}\n`;
+                    
+                    if (result.result) {
+                        message += `✅ 触发${result.result.action === 'STOP_LOSS' ? '止损' : '止盈'}\n`;
+                        message += `原因: ${result.result.reason}\n`;
+                        message += `盈亏: $${result.result.pnl.toFixed(2)} (${result.result.percent.toFixed(2)}%)`;
+                        showNotification(message, 'success');
+                    } else {
+                        message += `⏸️ 无触发条件`;
+                        showNotification(message, 'info');
+                    }
+                } else {
+                    throw new Error(result.message);
+                }
+            } catch (error) {
+                console.error('测试止损止盈失败:', error);
+                showNotification(`测试失败: ${error.message}`, 'error');
+            } finally {
+                testStopLossBtn.disabled = false;
+                testStopLossBtn.innerHTML = '<i class="fas fa-vial"></i> 测试功能';
+            }
+        });
+        
+        // 加载当前配置
+        async function loadStopLossConfig() {
+            try {
+                const response = await fetch('/api/trading/stops-config');
+                const result = await response.json();
+                
+                if (result.success) {
+                    const config = result.config;
+                    stopLossPercentInput.value = config.stopLoss.percent;
+                    takeProfitPercentInput.value = config.takeProfit.percent;
+                    console.log('✅ 止损止盈配置加载成功');
+                } else {
+                    console.error('加载配置失败:', result.message);
+                }
+            } catch (error) {
+                console.error('加载止损止盈配置失败:', error);
+            }
+        }
+        
+        // 页面加载时获取配置
+        loadStopLossConfig();
+        
         // 显示通知函数
         function showNotification(message, type = 'info') {
             const notification = document.createElement('div');
@@ -872,6 +1085,7 @@
         
         // 初始化
         initializeData();
+        loadConfig(); // 加载配置
         
         // 模拟实时更新
         setInterval(() => {
